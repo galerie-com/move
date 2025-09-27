@@ -166,10 +166,10 @@ export default function App() {
   // ---------- UI state: New Asset & Sale ----------
   const [totalSupply, setTotalSupply] = useState('1000');
   const [totalPrice, setTotalPrice] = useState('50000');
-  const [symbol, setSymbol] = useState('MONA');
-  const [assetName, setAssetName] = useState('Mona Lisa Digital Masterpiece');
-  const [description, setDescription] = useState('Leonardo da Vinci\'s iconic masterpiece, now tokenized for digital ownership and fractional investment opportunities');
-  const [iconUrl, setIconUrl] = useState('https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/687px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg');
+  const [symbol, setSymbol] = useState('STAR');
+  const [assetName, setAssetName] = useState('The Starry Night Digital Edition');
+  const [description, setDescription] = useState('Vincent van Gogh\'s mesmerizing masterpiece depicting a swirling night sky over Saint-Rémy, now available for fractional ownership in the digital realm');
+  const [iconUrl, setIconUrl] = useState('https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg/1280px-Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg');
   const [buyAmount, setBuyAmount] = useState('1');
   const [saleId, setSaleId] = useState('');
   // Admin does not need to fill coin type / treasury cap; resolve automatically
@@ -216,7 +216,8 @@ export default function App() {
     queryKey: ['product', route.name === 'product' ? route.id : null],
     enabled: route.name === 'product' && !!route.id,
     queryFn: async () => {
-      const saleObj = await client.getObject({ id: route.id!, options: { showContent: true, showPreviousTransaction: true } });
+      console.log('🚀 Product query starting for ID:', route.id);
+      const saleObj = await client.getObject({ id: route.id!, options: { showContent: true, showType: true, showPreviousTransaction: true } });
       const fields: any = (saleObj as any).data?.content?.fields;
       // Read NFT data from vault
       const nft = fields?.vault?.fields?.nft?.fields;
@@ -227,22 +228,61 @@ export default function App() {
       // Parse share coin type from sale type
       const saleType: string = (saleObj as any).data?.type;
       const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
+      console.log('🔍 Sale type:', saleType);
+      console.log('🔍 Share coin type:', shareCoinType);
 
-      // Circulating = coin supply from TreasuryCap<T> (in base units)
+      // Get token info: circulating supply and decimals
       let circulating = 0n;
-      let shareDecimals = 6;
-      try {
-        if (shareCoinType) {
+      let shareDecimals = 0;
+      
+      if (shareCoinType) {
+        console.log('🔄 Getting token info for:', shareCoinType);
+        try {
+          // Get coin metadata (decimals, symbol, etc.)
+          console.log('📋 Getting coin metadata...');
           const meta = await client.getCoinMetadata({ coinType: shareCoinType });
-          if (meta?.decimals !== undefined) shareDecimals = meta.decimals;
+          console.log('📋 Coin metadata result:', meta);
+          shareDecimals = meta?.decimals ?? 0;
+          
+          // Get actual circulating supply
+          console.log('📊 Getting total supply...');
+          const supplyResult = await client.getTotalSupply({ coinType: shareCoinType });
+          console.log('📊 Total supply result:', supplyResult);
+          circulating = BigInt(supplyResult?.value ?? '0');
+          
+          console.log('✅ Final Token Info:', {
+            coinType: shareCoinType,
+            decimals: shareDecimals,
+            circulatingSupply: circulating.toString(),
+            symbol: meta?.symbol
+          });
+          
+        } catch (error) {
+          console.error('❌ Failed to get token info:', error);
+
+          // Fallback: derive circulating supply from ShareBought events for this sale
+          try {
+            console.log('🟡 Falling back to events-based circulating supply...');
+            const ev = await client.queryEvents({
+              query: { MoveEventType: `${TEMPLATE_PACKAGE}::template::ShareBought` },
+              order: 'descending',
+              limit: 1000,
+            });
+            const minted = ev.data
+              .filter((e: any) => {
+                const sid = e.parsedJson?.sale_id ?? e.parsedJson?.object_id;
+                return sid === route.id;
+              })
+              .reduce((sum: bigint, e: any) => sum + BigInt(e.parsedJson?.amount ?? 0), 0n);
+            circulating = minted;
+            console.log('🟡 Circulating (via events sum):', circulating.toString());
+          } catch (eventFallbackError) {
+            console.warn('Event fallback failed:', eventFallbackError);
+          }
         }
-        const treasuryId = fields?.vault?.fields?.treasury?.fields?.id?.id as string | undefined;
-        if (treasuryId) {
-          const treObj = await client.getObject({ id: treasuryId, options: { showContent: true } });
-          const tsVal = (treObj as any)?.data?.content?.fields?.total_supply?.fields?.value;
-          if (tsVal !== undefined) circulating = BigInt(tsVal);
-        }
-      } catch {}
+      } else {
+        console.log('⚠️ No shareCoinType found');
+      }
 
       const totalSupplyBig = BigInt(fields?.vault?.fields?.total_supply || 0);
       const totalPriceBig = BigInt(fields?.vault?.fields?.total_price || 0);
