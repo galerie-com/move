@@ -1,0 +1,11 @@
+[package]
+name = "galerie_nft_template"
+version = "0.0.1"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+asset_tokenization = { local = "../asset_tokenization" }
+
+[addresses]
+galerie_nft_template = "0x0"
