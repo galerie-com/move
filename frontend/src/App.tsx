@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ConnectButton,
   useCurrentAccount,
@@ -8,7 +8,7 @@ import {
 } from '@mysten/dapp-kit';
 import { useQuery } from '@tanstack/react-query';
 import { Transaction } from '@mysten/sui/transactions';
-import { BASE_PACKAGE, TEMPLATE_PACKAGE, OTW_TYPE, PLATFORM_CAP_ID, USDC_TYPE } from './const';
+import { TEMPLATE_PACKAGE, PLATFORM_CAP_ID, USDC_TYPE, DEFAULT_COIN_TYPE, DEFAULT_TREASURY_CAP_ID } from './const';
 
 function ErrorPanel({ error }: { error: unknown }) {
   if (!error) return null;
@@ -172,54 +172,23 @@ export default function App() {
   const [iconUrl, setIconUrl] = useState('https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/687px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg');
   const [buyAmount, setBuyAmount] = useState('1');
   const [saleId, setSaleId] = useState('');
+  // Admin does not need to fill coin type / treasury cap; resolve automatically
 
-  // ---------- Derived types ----------
-  // Removed unused computed types
-
-  // ---------- Sanity: base objects (debug) ----------
-  // Removed unused base object queries
-
-  // ---------- List owned TokenizedAssets (for holdings display) ----------
-  // Do not rely on exact BASE_PACKAGE for the outer type address.
-  // Instead, fetch owned objects and filter by the type suffix that encodes the template OTW.
-  const tokenizedAssetTypeSuffix = useMemo(() => {
-    if (TEMPLATE_PACKAGE.includes('<')) return '';
-    return `::tokenized_asset::TokenizedAsset<${TEMPLATE_PACKAGE}::template::${OTW_TYPE}>`;
-  }, []);
-
-  const { data: myAssets, refetch: refetchAssets } = useQuery({
-    queryKey: ['myAssets', account?.address, tokenizedAssetTypeSuffix, route.name], // Add route to trigger refetch on navigation
-    enabled: !!account && !!tokenizedAssetTypeSuffix,
-    queryFn: async () => {
-      const res = await client.getOwnedObjects({
-        owner: account!.address,
-        options: { showContent: true, showType: true, showOwner: true },
-      });
-      
-      // Filter to TokenizedAsset<...OTW> regardless of base package address
-      const filtered = res.data.filter((o: any) => {
-        const t: string | undefined = o.data?.type;
-        return typeof t === 'string' && t.endsWith(tokenizedAssetTypeSuffix);
-      });
-      
-      
-      return filtered;
-    },
-  });
+  // ---------- Helpers ----------
+  function parseSaleShareCoinType(saleType: string): string | null {
+    // expects something like 0x...::template::Sale<COIN_TYPE>
+    const m = saleType.match(/::template::Sale<(.+)>$/);
+    return m ? m[1] : null;
+  }
 
   // ---------- Dev helpers: expose to window for console debugging ----------
   useEffect(() => {
     try {
       (window as any).client = client;
       (window as any).TEMPLATE_PACKAGE = TEMPLATE_PACKAGE;
-      (window as any).OTW_TYPE = OTW_TYPE;
     } catch {}
   }, [client]);
-  useEffect(() => {
-    try { (window as any).myAssets = myAssets; } catch {}
-  }, [myAssets]);
 
-  // ---------- Helpers ----------
   // Convert USDC units to dollars (assuming 6 decimals like standard USDC)
   function formatUSDC(amount: bigint): string {
     const dollars = Number(amount) / 1_000_000; // USDC has 6 decimals
@@ -230,7 +199,6 @@ export default function App() {
   async function refreshAllData() {
     try {
       await Promise.all([
-        refetchAssets(),
         refetchSales(),
         route.name === 'product' && route.id ? refetchProduct() : Promise.resolve(),
         route.name === 'product' && route.id ? refetchHoldings() : Promise.resolve(),
@@ -239,200 +207,77 @@ export default function App() {
       console.warn('Some data refresh failed:', e);
     }
   }
+  
 
-  async function resolveSaleMetadata(client: ReturnType<typeof useSuiClient>, saleObj: any): Promise<any | null> {
-    try {
-      const fields: any = saleObj?.data?.content?.fields;
-      if (!fields) return null;
+  // ---
 
-      // Infer AssetMetadata type from the embedded AssetCap type
-      const capTypeStr: string | undefined = fields?.cap?.type;
-      const innerDyn = typeof capTypeStr === 'string' ? (capTypeStr.match(/AssetCap<([^>]+)>/)?.[1]) : undefined;
-      const metaTypeDyn = innerDyn ? `${BASE_PACKAGE}::tokenized_asset::AssetMetadata<${innerDyn}>` : undefined;
-
-      // 1) Try sale creation tx (works before any mutations like buy)
-      const prevTx = (saleObj as any).data?.previousTransaction as string | undefined;
-      if (prevTx) {
-        const txb = await client.getTransactionBlock({ digest: prevTx, options: { showObjectChanges: true } });
-        const oc = (txb.objectChanges || []) as any[];
-        let createdMeta = undefined as any;
-        if (metaTypeDyn) {
-          createdMeta = oc.find((c: any) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType === metaTypeDyn);
-        }
-        if (!createdMeta && innerDyn) {
-          createdMeta = oc.find((c: any) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.includes('AssetMetadata<') && c.objectType.endsWith(`<${innerDyn}>`));
-        }
-        if (createdMeta) {
-          return await client.getObject({ id: createdMeta.objectId, options: { showContent: true } });
-        }
-      }
-
-      // 2) Try the AssetCap's creation tx (robust even after sale mutations)
-      const capId = fields?.cap?.fields?.id?.id as string | undefined;
-      if (capId) {
-        const capObj = await client.getObject({ id: capId, options: { showPreviousTransaction: true } });
-        const capPrevTx = (capObj as any)?.data?.previousTransaction as string | undefined;
-        if (capPrevTx) {
-          const txb = await client.getTransactionBlock({ digest: capPrevTx, options: { showObjectChanges: true } });
-          const oc = (txb.objectChanges || []) as any[];
-          let createdMeta = undefined as any;
-          if (metaTypeDyn) {
-            createdMeta = oc.find((c: any) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType === metaTypeDyn);
-          }
-          if (!createdMeta && innerDyn) {
-            createdMeta = oc.find((c: any) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.includes('AssetMetadata<') && c.objectType.endsWith(`<${innerDyn}>`));
-          }
-          if (createdMeta) {
-            return await client.getObject({ id: createdMeta.objectId, options: { showContent: true } });
-          }
-        }
-      }
-
-      // 3) Fallback: scan recent txs affecting the cap to find the creation
-      if (capId) {
-        const txs = await client.queryTransactionBlocks({ filter: { ChangedObject: capId }, options: { showObjectChanges: true }, limit: 50 });
-        for (const entry of txs.data as any[]) {
-          const oc = (entry.objectChanges || []) as any[];
-          const capCreated = oc.find((c: any) => c.type === 'created' && c.objectId === capId);
-          if (capCreated) {
-            let createdMeta = undefined as any;
-            if (metaTypeDyn) {
-              createdMeta = oc.find((c: any) => c.type === 'created' && c.objectType === metaTypeDyn);
-            }
-            if (!createdMeta && innerDyn) {
-              createdMeta = oc.find((c: any) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.includes('AssetMetadata<') && c.objectType.endsWith(`<${innerDyn}>`));
-            }
-            if (createdMeta) {
-              return await client.getObject({ id: createdMeta.objectId, options: { showContent: true } });
-            }
-            break;
-          }
-        }
-      }
-
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function assetBalance(o: any): bigint {
-    try {
-      const fields = o?.data?.content?.fields;
-      const bal = fields?.balance;
-      // Balance may be serialized directly as a string/number under fields.balance
-      if (typeof bal === 'string' || typeof bal === 'number' || typeof bal === 'bigint') {
-        return BigInt(bal as any);
-      }
-      const val = bal?.fields?.value ?? bal?.value;
-      if (val !== undefined) return BigInt(val);
-      return 0n;
-    } catch { return 0n; }
-  }
-
-  // ---------- Fetch details for current product (sale + metadata) ----------
+  // ---------- Fetch details for current product (sale + NFT + coin data) ----------
   const { data: product, refetch: refetchProduct } = useQuery({
     queryKey: ['product', route.name === 'product' ? route.id : null],
     enabled: route.name === 'product' && !!route.id,
     queryFn: async () => {
       const saleObj = await client.getObject({ id: route.id!, options: { showContent: true, showPreviousTransaction: true } });
       const fields: any = (saleObj as any).data?.content?.fields;
+      // Read NFT data from vault
+      const nft = fields?.vault?.fields?.nft?.fields;
+      const name = nft?.name ?? 'Unknown Asset';
+      const description = nft?.description ?? 'No description available';
+      const image = nft?.image_url ?? 'https://via.placeholder.com/300x300?text=No+Image';
 
-      // Removed generic logs in product view
-      
-      // Prefer direct meta_id on Sale if present; fallback to robust resolver
-      let metadata: any | null = null;
-      const saleMetaId = fields?.meta_id as string | undefined;
-      if (saleMetaId) {
-        try { metadata = await client.getObject({ id: saleMetaId, options: { showContent: true } }); } catch {}
-      }
-      if (!metadata) {
-        metadata = await resolveSaleMetadata(client, saleObj);
-      }
-      
-      // Derive circulating from cap.supply if present
+      // Parse share coin type from sale type
+      const saleType: string = (saleObj as any).data?.type;
+      const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
+
+      // Circulating = coin supply from TreasuryCap<T>
       let circulating = 0n;
       try {
-        const sup = fields?.cap?.fields?.supply;
-        const val = sup?.fields?.value ?? sup?.value;
-        if (val !== undefined) circulating = BigInt(val);
+        const treasuryId = fields?.vault?.fields?.treasury?.fields?.id?.id as string | undefined;
+        if (treasuryId) {
+          const treObj = await client.getObject({ id: treasuryId, options: { showContent: true } });
+          const tsVal = (treObj as any)?.data?.content?.fields?.total_supply?.fields?.value;
+          if (tsVal !== undefined) circulating = BigInt(tsVal);
+        }
       } catch {}
-      
-      const totalSupplyBig = BigInt(fields?.total_supply || 0);
-      const totalPriceBig = BigInt(fields?.total_price || 0);
-      const remaining = totalSupplyBig > circulating ? (totalSupplyBig - circulating) : 0n;
-      
-      // Use metadata if available, otherwise show placeholder values
-      const metadataFields = metadata?.data?.content && 'fields' in metadata.data.content ? metadata.data.content.fields as any : null;
-      
-      // Removed generic logs in product view
 
-      // Compute expected TokenizedAsset type suffix for this sale's asset
-      const capTypeStr: string | undefined = fields?.cap?.type;
-      const innerType = typeof capTypeStr === 'string' ? (capTypeStr.match(/AssetCap<([^>]+)>/)?.[1]) : undefined;
-      const expectedSuffix = innerType ? `::tokenized_asset::TokenizedAsset<${innerType}>` : undefined;
-      
-      // Removed generic logs in product view
-      
+      const totalSupplyBig = BigInt(fields?.vault?.fields?.total_supply || 0);
+      const totalPriceBig = BigInt(fields?.vault?.fields?.total_price || 0);
+      const remaining = totalSupplyBig > circulating ? (totalSupplyBig - circulating) : 0n;
+
+      // Coin symbol via metadata endpoint (best effort)
+      let symbol = 'SHARE';
+      try {
+        if (shareCoinType) {
+          const meta = await client.getCoinMetadata({ coinType: shareCoinType });
+          if (meta?.symbol) symbol = meta.symbol;
+        }
+      } catch {}
+
       const productData = {
         id: route.id!,
         totalSupply: totalSupplyBig,
         totalPrice: totalPriceBig,
         circulating,
         remaining,
-        symbol: metadataFields?.symbol ?? 'UNK',
-        name: metadataFields?.name ?? 'Unknown Asset',
-        description: metadataFields?.description ?? 'No description available',
-        image: metadataFields?.icon_url ?? 'https://via.placeholder.com/300x300?text=No+Image',
-        expectedSuffix,
-        saleCapId: fields?.cap?.fields?.id?.id, // The AssetCap object ID for this specific sale
+        symbol,
+        name,
+        description,
+        image,
+        shareCoinType,
       };
       
       return productData;
     },
   });
 
-  // Compute per-asset holdings for current product (track by specific AssetCap)
+  // Compute per-asset holdings for current product (sum Coin<T> balances)
   const { data: perAssetHoldings, refetch: refetchHoldings } = useQuery({
-    queryKey: ['perAssetHoldings', route.name === 'product' ? route.id : null, account?.address, (product as any)?.saleCapId],
-    enabled: route.name === 'product' && !!route.id && !!account?.address && !!(product as any)?.saleCapId,
+    queryKey: ['perAssetHoldings', route.name === 'product' ? route.id : null, account?.address, (product as any)?.shareCoinType],
+    enabled: route.name === 'product' && !!route.id && !!account?.address && !!(product as any)?.shareCoinType,
     queryFn: async () => {
       try {
-        const saleCapId = (product as any)?.saleCapId;
-        const expectedSuffix = (product as any)?.expectedSuffix as string | undefined;
-        if (!saleCapId) return 0n;
-
-        const owned = await client.getOwnedObjects({ 
-          owner: account!.address, 
-          options: { showType: true, showContent: true, showPreviousTransaction: true } 
-        });
-        const tokenizedAssets = owned.data.filter((o: any) => {
-          const type = o?.data?.type;
-          if (typeof type !== 'string') return false;
-          if (!type.includes('::tokenized_asset::TokenizedAsset<')) return false;
-          return expectedSuffix ? type.endsWith(expectedSuffix) : true;
-        });
-        
-        let totalBalance = 0n;
-        for (const asset of tokenizedAssets) {
-          try {
-            const txDigest = asset.data?.previousTransaction;
-            if (!txDigest) continue;
-            const tx = await client.getTransactionBlock({ digest: txDigest, options: { showObjectChanges: true } });
-            const createdObjects = tx.objectChanges?.filter((change: any) => change.type === 'created') || [];
-            const mutatedObjects = tx.objectChanges?.filter((change: any) => change.type === 'mutated') || [];
-            const assetCreated = createdObjects.find((obj: any) => obj.objectId === asset.data?.objectId);
-            if (assetCreated) {
-              const changes = [...createdObjects, ...mutatedObjects];
-              const matchCap = !!changes.find((obj: any) => obj.objectId === saleCapId);
-              const matchSale = !!changes.find((obj: any) => obj.objectId === (product as any)?.id);
-              if (matchCap || matchSale) {
-                totalBalance += assetBalance(asset);
-              }
-            }
-          } catch {}
-        }
-        return totalBalance;
+        const shareCoinType = (product as any)?.shareCoinType as string;
+        const coins = await client.getCoins({ owner: account!.address, coinType: shareCoinType });
+        return coins.data.reduce((sum: bigint, c: any) => sum + BigInt(c.balance), 0n);
       } catch {
         return 0n;
       }
@@ -440,99 +285,56 @@ export default function App() {
   });
 
   // ---------- Explore: fetch all sales via events ----------
+  async function fetch_nft_list() {
+    const ev = await client.queryEvents({
+      query: { MoveEventType: `${TEMPLATE_PACKAGE}::template::SaleStarted` },
+      order: 'descending',
+      limit: 100,
+    });
+    const saleIds: string[] = ev.data.map((e: any) => e.parsedJson?.sale_id ?? e.parsedJson?.object_id).filter(Boolean);
+    const unique = Array.from(new Set(saleIds));
+    if (unique.length === 0) return [];
+
+    const sales = await client.multiGetObjects({
+      ids: unique,
+      options: { showContent: true, showType: true },
+    });
+
+    const items = await Promise.all(sales.map(async (sale: any) => {
+      const id: string = sale?.data?.objectId;
+      const fields: any = sale?.data?.content?.fields;
+      const saleType: string = sale?.data?.type;
+      const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
+      const nft = fields?.vault?.fields?.nft?.fields;
+      const totalSupply = BigInt(fields?.vault?.fields?.total_supply || 0);
+      const totalPrice = BigInt(fields?.vault?.fields?.total_price || 0);
+      const pps = totalSupply > 0n ? totalPrice / totalSupply : 0n;
+      let symbol = 'SHARE';
+      try { if (shareCoinType) { const meta = await client.getCoinMetadata({ coinType: shareCoinType }); if (meta?.symbol) symbol = meta.symbol; } } catch {}
+      return {
+        id,
+        name: nft?.name || 'Unknown Asset',
+        description: nft?.description || '',
+        image: nft?.image_url || 'https://via.placeholder.com/300x300?text=No+Image',
+        totalSupply,
+        totalPrice,
+        pps,
+        symbol,
+        shareCoinType,
+      };
+    }));
+
+    return items;
+  }
+
   const { data: sales, refetch: refetchSales } = useQuery({
-    queryKey: ['sales', TEMPLATE_PACKAGE, route.name], // Add route to trigger refetch on navigation
+    queryKey: ['sales_v2', TEMPLATE_PACKAGE, route.name],
     enabled: !!TEMPLATE_PACKAGE,
-    queryFn: async () => {
-      const ev = await client.queryEvents({
-        query: { MoveEventType: `${TEMPLATE_PACKAGE}::template::SaleStarted` },
-        order: 'descending',
-        limit: 100,
-      });
-      
-      const saleIds = ev.data.map((e: any) => e.parsedJson?.sale_id ?? e.parsedJson?.object_id).filter(Boolean);
-      const unique = Array.from(new Set(saleIds));
-      
-      // Fetch sale objects (including previousTransaction) and resolve metadata per-sale robustly
-      const details = await Promise.all(unique.map(async (id: unknown) => {
-        return await client.getObject({ id: String(id), options: { showContent: true, showPreviousTransaction: true } });
-      }));
-
-      const salesWithMetadata = await Promise.all(details.map(async (sale: any) => {
-        const fields = sale?.data?.content?.fields as any;
-        const metaId = fields?.meta_id as string | undefined;
-        let metaObj: any = null;
-        if (metaId) {
-          try { metaObj = await client.getObject({ id: metaId, options: { showContent: true } }); } catch {}
-        }
-        if (!metaObj) {
-          metaObj = await resolveSaleMetadata(client, sale);
-        }
-        return { ...sale, metadata: metaObj };
-      }));
-
-      // ---- DEBUG LOGS (Explore only): print ALL Sale objects & ALL TokenizedAssets for this template ----
-      try {
-        // Log all Sale objects with full content
-        const saleSummaries = salesWithMetadata.map((s: any) => ({
-          id: s?.data?.objectId,
-          type: s?.data?.type,
-          fields: s?.data?.content?.fields,
-        }));
-        console.groupCollapsed('Explore Debug: ALL SALES');
-        console.log(saleSummaries);
-        console.groupEnd();
-
-        // Find recent TokenizedAssets created via template::buy
-        const buyTxs = await client.queryTransactionBlocks({
-          filter: { MoveFunction: { package: TEMPLATE_PACKAGE, module: 'template', function: 'buy' } },
-          options: { showObjectChanges: true, showInput: true },
-          limit: 100,
-        });
-
-        const tokenizedSuffix = `::tokenized_asset::TokenizedAsset<${TEMPLATE_PACKAGE}::template::${OTW_TYPE}>`;
-        const createdTaIds = new Set<string>();
-        const saleIdSet = new Set<string>(saleSummaries.map((s: any) => String(s.id)));
-        const saleCapIdSet = new Set<string>(saleSummaries.map((s: any) => String(s.fields?.cap?.fields?.id?.id)).filter(Boolean));
-        const linking: Record<string, { by: 'sale' | 'cap' | 'unknown'; created: string[]; mutated: string[]; tx: string }[]> = {};
-        for (const tx of buyTxs.data as any[]) {
-          const created = (tx.objectChanges || []).filter((c: any) => c.type === 'created' && typeof c.objectType === 'string');
-          for (const c of created) {
-            if (typeof c.objectType === 'string' && c.objectType.endsWith(tokenizedSuffix)) {
-              createdTaIds.add(c.objectId);
-            }
-          }
-          const mutated = (tx.objectChanges || []).filter((c: any) => c.type === 'mutated');
-          const mutatedIds = mutated.map((m: any) => m.objectId);
-          const saleMatches = mutatedIds.filter((id: string) => saleIdSet.has(id));
-          const capMatches = mutatedIds.filter((id: string) => saleCapIdSet.has(id));
-          const createdInTx = created
-            .filter((c: any) => typeof c.objectType === 'string' && c.objectType.endsWith(tokenizedSuffix))
-            .map((c: any) => c.objectId);
-          const key = saleMatches[0] || capMatches[0] || 'unknown';
-          const mode: 'sale' | 'cap' | 'unknown' = saleMatches.length > 0 ? 'sale' : (capMatches.length > 0 ? 'cap' : 'unknown');
-          if (!linking[key]) linking[key] = [];
-          linking[key].push({ by: mode, created: createdInTx, mutated: mutatedIds, tx: String(tx.digest || '') });
-        }
-
-        const taIds = Array.from(createdTaIds);
-        const taObjs = taIds.length > 0 ? await client.multiGetObjects({ ids: taIds, options: { showContent: true, showType: true, showPreviousTransaction: true } }) : [];
-        console.groupCollapsed('Explore Debug: ALL TokenizedAssets (recent buys)');
-        console.log({ count: taObjs.length, objects: taObjs });
-        console.groupEnd();
-
-        // Print mapping attempts of Sale/Cap -> created TokenizedAssets per transaction
-        console.groupCollapsed('Explore Debug: BUY LINKING (Sale/Cap to Created TokenizedAssets)');
-        console.log(linking);
-        console.groupEnd();
-      } catch {}
-      
-      return salesWithMetadata;
-    },
+    queryFn: fetch_nft_list,
   });
 
   // =====================================================================================
-  // Admin: create asset (cap+meta), mint 1/1 NFT, start & share Sale
+  // Admin: create NFT+Coin vault, start & share Sale
   // =====================================================================================
   async function createAssetAndSale() {
     setLastError(null);
@@ -545,6 +347,27 @@ export default function App() {
       // Validate required fields
       if (!symbol || !assetName || !description || !iconUrl) {
         throw new Error('All fields (symbol, name, description, image URL) are required');
+      }
+      // Resolve coin type and TreasuryCap: prefer defaults in consts, else auto-detect
+      let resolvedCoinType = DEFAULT_COIN_TYPE;
+      let treasuryId: string | undefined = DEFAULT_TREASURY_CAP_ID || undefined;
+      if (!resolvedCoinType || !treasuryId) {
+        setLoadingMessage('Resolving coin type and TreasuryCap...');
+        const owned = await client.getOwnedObjects({ owner: account.address, options: { showType: true } });
+        if (!resolvedCoinType) {
+          const anyCap = owned.data.find((o: any) => typeof (o.data as any)?.type === 'string' && (o.data as any).type.startsWith('0x2::coin::TreasuryCap<'));
+          if (!anyCap) throw new Error('No TreasuryCap found in your wallet. Please publish a coin and hold its TreasuryCap.');
+          const t = (anyCap.data as any).type as string;
+          const m = t.match(/^0x2::coin::TreasuryCap<(.+)>$/);
+          if (!m) throw new Error('Failed to parse TreasuryCap type.');
+          resolvedCoinType = m[1];
+        }
+        if (!treasuryId) {
+          const targetType = `0x2::coin::TreasuryCap<${resolvedCoinType}>`;
+          const cap = owned.data.find((o: any) => (o.data as any)?.type === targetType);
+          if (!cap || !cap.data || !('objectId' in cap.data)) throw new Error(`TreasuryCap not found in your wallet for ${resolvedCoinType}.`);
+          treasuryId = (cap.data as any).objectId as string;
+        }
       }
       
       const enc = new TextEncoder();
@@ -566,13 +389,25 @@ export default function App() {
       
       const tx = new Transaction();
 
-      // Create asset -> (AssetCap, AssetMetadata)
-      let cap, meta;
+      // Resolve PlatformCap (owned) and Registry (shared) for the current TEMPLATE_PACKAGE
+      let platformCapId = PLATFORM_CAP_ID;
       try {
-        [cap, meta] = tx.moveCall({
+        const owned = await client.getOwnedObjects({ owner: account.address, options: { showType: true } });
+        const exactType = `${TEMPLATE_PACKAGE}::template::PlatformCap`;
+        const match = owned.data.find((o: any) => (o.data as any)?.type === exactType);
+        if (match && (match.data as any)?.objectId) platformCapId = (match.data as any).objectId;
+      } catch {}
+
+      // Registry is no longer required in start_sale
+
+      // Create asset -> Vault<T>
+      let vault;
+      try {
+        vault = tx.moveCall({
           target: `${TEMPLATE_PACKAGE}::template::create_new_asset`,
+          typeArguments: [resolvedCoinType],
           arguments: [
-            tx.object(PLATFORM_CAP_ID),
+            tx.object(platformCapId),
             tx.pure.u64(_totalSupply),
             tx.pure.u64(_totalPrice),
             tx.pure.vector('u8', enc.encode(symbol)),
@@ -580,32 +415,27 @@ export default function App() {
             tx.pure.string(description),
             tx.pure.string(iconUrl),
             tx.pure.bool(false),
+            tx.object(treasuryId),
           ],
-        }) as unknown as [any, any];
+        }) as unknown as any;
       } catch (moveCallError) {
         console.error('Move call error:', moveCallError);
         throw new Error(`Failed to create move call: ${moveCallError}`);
       }
 
-      // Start sale first (pass metadata by reference so Sale stores meta_id)
+      // Start sale (indexes in registry)
       const sale = tx.moveCall({
         target: `${TEMPLATE_PACKAGE}::template::start_sale`,
+        typeArguments: [resolvedCoinType],
         arguments: [
-          cap,
-          meta,
+          vault,
           tx.pure.u64(_totalSupply),
           tx.pure.u64(_totalPrice),
           tx.pure.address(account.address),
         ],
       }) as unknown as any;
       // Share the Sale object
-      tx.moveCall({ target: `${TEMPLATE_PACKAGE}::template::share_sale`, arguments: [sale] });
-      // Share the AssetMetadata after it has been used by start_sale
-      tx.moveCall({
-        target: `0x2::transfer::public_share_object`,
-        typeArguments: [`${BASE_PACKAGE}::tokenized_asset::AssetMetadata<${TEMPLATE_PACKAGE}::template::${OTW_TYPE}>`],
-        arguments: [meta],
-      });
+      tx.moveCall({ target: `${TEMPLATE_PACKAGE}::template::share_sale`, typeArguments: [resolvedCoinType], arguments: [sale] });
 
       setLoadingMessage('Executing transaction...');
       // Set explicit gas budget to avoid dry-run budget inference issues
@@ -655,6 +485,139 @@ export default function App() {
   }
 
   // =====================================================================================
+  // Admin: publish per-asset coin template (2-step flow)
+  // =====================================================================================
+  async function publishCoinTemplate(autoProceed: boolean) {
+    setLastError(null);
+    setIsLoading(true);
+    setLoadingMessage('Publishing coin template...');
+    try {
+      if (!account) throw new Error('Connect wallet first.');
+
+      // Lazy import coin bytecode
+      // Expecting a file generated by: sui move build --dump-bytecode-as-base64 > src/coin_template.json
+      const coinDataMod = await import('./coin_template.json');
+      const coinData: any = (coinDataMod as any).default ?? coinDataMod;
+      const modules: string[] = coinData.modules as string[]; // dump-bytecode-as-base64 yields base64 strings
+      const dependencies: string[] = coinData.dependencies as string[];
+      if (!modules?.length || !dependencies?.length) throw new Error('coin_template.json missing modules/dependencies.');
+
+      const tx = new Transaction();
+      const [upgradeCap] = tx.publish({ modules, dependencies });
+      // Prevent UnusedValueWithoutDrop: explicitly transfer the UpgradeCap back to sender
+      tx.transferObjects([upgradeCap], tx.pure.address(account.address));
+      try { (tx as any).setGasBudget?.(30_000_000); } catch {}
+      const res = await signAndExecute({ transaction: tx, chain: 'sui:testnet' });
+      const full = await client.waitForTransaction({ digest: res.digest, options: { showObjectChanges: true } });
+
+      // Parse new package id
+      const oc = (full.objectChanges || []) as any[];
+      const published = oc.find((c) => c.type === 'published');
+      const pkgId = published?.packageId as string | undefined;
+      if (!pkgId) throw new Error('Publish succeeded but packageId not found.');
+
+      // Find TreasuryCap
+      const tre = oc.find((c) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.startsWith(`0x2::coin::TreasuryCap<${pkgId}::coin_template::COIN_TEMPLATE>`));
+      const treId = tre?.objectId as string | undefined;
+      if (!treId) throw new Error('TreasuryCap not found in publish effects.');
+
+      const cType = `${pkgId}::coin_template::COIN_TEMPLATE`;
+      setDebugData({ publishDigest: res.digest, packageId: pkgId, treasuryCapId: treId });
+      setLoadingMessage('Coin published.');
+
+      if (autoProceed) {
+        // proceed to create sale using the freshly published coin
+        await createAssetAndSaleWithOverrides(cType, treId);
+      } else {
+        setIsLoading(false);
+        alert(`Coin published. Package: ${pkgId}`);
+      }
+    } catch (e) {
+      setIsLoading(false);
+      setLastError(e instanceof Error ? e.message : String(e));
+      console.error('Publish Coin Error:', e);
+    }
+  }
+
+  async function createAssetAndSaleWithOverrides(cType: string, treId: string) {
+    await createAssetAndSaleInternal(cType, treId);
+  }
+
+  async function createAssetAndSaleInternal(resolvedCoinTypeParam?: string, treasuryIdParam?: string) {
+    // Internal variant of createAssetAndSale using explicit overrides
+    setLastError(null);
+    setIsLoading(true);
+    setLoadingMessage('Creating asset and sale...');
+    try {
+      if (!account) throw new Error('Connect wallet first.');
+      if (!symbol || !assetName || !description || !iconUrl) {
+        throw new Error('All fields (symbol, name, description, image URL) are required');
+      }
+
+      const resolvedCoinType = resolvedCoinTypeParam!;
+      const treasuryId = treasuryIdParam!;
+      if (!resolvedCoinType || !treasuryId) throw new Error('Missing coin overrides.');
+
+      const enc = new TextEncoder();
+      const _totalSupply = BigInt(totalSupply || '0');
+      const _totalPrice = BigInt(totalPrice || '0');
+      if (_totalSupply <= 0n) throw new Error('Total supply must be > 0.');
+
+      const tx = new Transaction();
+
+      // Resolve PlatformCap for current package
+      let platformCapId = PLATFORM_CAP_ID;
+      try {
+        const owned = await client.getOwnedObjects({ owner: account.address, options: { showType: true } });
+        const exactType = `${TEMPLATE_PACKAGE}::template::PlatformCap`;
+        const match = owned.data.find((o: any) => (o.data as any)?.type === exactType);
+        if (match && (match.data as any)?.objectId) platformCapId = (match.data as any).objectId;
+      } catch {}
+
+      const vault = tx.moveCall({
+        target: `${TEMPLATE_PACKAGE}::template::create_new_asset`,
+        typeArguments: [resolvedCoinType],
+        arguments: [
+          tx.object(platformCapId),
+          tx.pure.u64(_totalSupply),
+          tx.pure.u64(_totalPrice),
+          tx.pure.vector('u8', enc.encode(symbol)),
+          tx.pure.string(assetName),
+          tx.pure.string(description),
+          tx.pure.string(iconUrl),
+          tx.pure.bool(false),
+          tx.object(treasuryId),
+        ],
+      }) as unknown as any;
+
+      const sale = tx.moveCall({
+        target: `${TEMPLATE_PACKAGE}::template::start_sale`,
+        typeArguments: [resolvedCoinType],
+        arguments: [
+          vault,
+          tx.pure.u64(_totalSupply),
+          tx.pure.u64(_totalPrice),
+          tx.pure.address(account.address),
+        ],
+      }) as unknown as any;
+
+      tx.moveCall({ target: `${TEMPLATE_PACKAGE}::template::share_sale`, typeArguments: [resolvedCoinType], arguments: [sale] });
+
+      try { (tx as any).setGasBudget?.(100000000); } catch {}
+      const res = await signAndExecute({ transaction: tx, chain: 'sui:testnet' });
+      const full = await client.waitForTransaction({ digest: res.digest, options: { showObjectChanges: true } });
+      const oc = (full.objectChanges || []) as any[];
+      const createdSale = oc.find((c) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.includes('::template::Sale<'));
+      if (createdSale?.objectId) setSaleId(createdSale.objectId);
+      setIsLoading(false);
+      alert(`Asset created. Sale shared. Sale ID: ${createdSale?.objectId || 'unknown'}`);
+    } catch (e) {
+      setIsLoading(false);
+      setLastError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // =====================================================================================
   // Product: buy from Sale (now uses USDC)
   // =====================================================================================
   async function buyFromSale(id: string) {
@@ -669,12 +632,16 @@ export default function App() {
 
       setLoadingMessage('Loading sale details...');
       // Load sale to compute pps
-      const saleObj = await client.getObject({ id, options: { showContent: true } });
+      const saleObj = await client.getObject({ id, options: { showContent: true, showType: true } });
       const fields: any = (saleObj as any).data?.content?.fields;
       const totalSupply = BigInt(fields.total_supply);
       const totalPrice = BigInt(fields.total_price);
       if (totalSupply <= 0n) throw new Error('Invalid total supply');
       const pps = totalPrice / totalSupply;
+      // Determine share coin type from sale type
+      const saleType: string = (saleObj as any)?.data?.type;
+      const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
+      if (!shareCoinType) throw new Error('Cannot determine share coin type from sale.');
       const cost = pps * amt;
 
       setLoadingMessage('Finding USDC coins...');
@@ -717,13 +684,13 @@ export default function App() {
       
       const [pay] = tx.splitCoins(usdcCoin, [tx.pure.u64(cost)]);
       
-      const [fts, change] = tx.moveCall({
+      const [shares, change] = tx.moveCall({
         target: `${TEMPLATE_PACKAGE}::template::buy`,
-        typeArguments: [USDC_TYPE],
+        typeArguments: [USDC_TYPE, shareCoinType],
         arguments: [tx.object(id), tx.pure.u64(amt), pay],
       }) as unknown as [any, any];
       
-      tx.transferObjects([change, fts], tx.pure.address(account.address));
+      tx.transferObjects([change, shares], tx.pure.address(account.address));
       // Transfer remaining USDC back to user
       tx.transferObjects([usdcCoin], tx.pure.address(account.address));
 
@@ -780,6 +747,33 @@ export default function App() {
             <Field label="Name"><input value={assetName} onChange={(e) => setAssetName(e.target.value)} /></Field>
             <Field label="Description"><input value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
             <Field label="Image URL"><input value={iconUrl} onChange={(e) => setIconUrl(e.target.value)} /></Field>
+            {/* Coin type and TreasuryCap resolved automatically */}
+            <div className="row" style={{ gap: 12 }}>
+              <button 
+                onClick={() => publishCoinTemplate(false)}
+                disabled={!account || isLoading}
+                style={{ background: isLoading ? '#6b7280' : '#10b981', color: 'white', border: 'none', borderRadius: 4, padding: '6px 10px', cursor: isLoading ? 'not-allowed' : 'pointer' }}
+              >
+                {isLoading ? '⏳ Publishing...' : 'Publish Coin Template'}
+              </button>
+              <button 
+                onClick={async () => {
+                  setLastError(null);
+                  try {
+                    const coinDataMod = await import('./coin_template.json');
+                    const coinData: any = (coinDataMod as any).default ?? coinDataMod;
+                    if (!coinData?.modules?.length) { alert('coin_template.json missing. Build first.'); return; }
+                    await publishCoinTemplate(true);
+                  } catch (e) {
+                    setLastError(e instanceof Error ? e.message : String(e));
+                  }
+                }}
+                disabled={!account || isLoading}
+                style={{ background: isLoading ? '#6b7280' : '#2563eb', color: 'white', border: 'none', borderRadius: 4, padding: '6px 10px', cursor: isLoading ? 'not-allowed' : 'pointer' }}
+              >
+                {isLoading ? '⏳ Auto Flow...' : 'Publish Coin + Create Sale'}
+              </button>
+            </div>
             <div className="row">
               <button 
                 onClick={createAssetAndSale} 
@@ -811,19 +805,11 @@ export default function App() {
           ) : (
             <div className="nft-list">
               {(sales as any[]).map((s: any) => {
-                const id = s.data?.objectId as string;
-                const fields: any = s.data?.content?.fields;
-                const metadata = s.metadata;
-                
-                
-                // Use metadata if available, otherwise show placeholder values
-                const metadataFields = metadata?.data?.content && 'fields' in metadata.data.content ? metadata.data.content.fields as any : null;
-                const saleName = metadataFields?.name || 'Unknown Asset';
-                const saleSymbol = metadataFields?.symbol || 'UNK';
-                const saleImage = metadataFields?.icon_url || 'https://via.placeholder.com/300x300?text=No+Image';
-                const pps = formatUSDC(BigInt(fields?.total_price || 0) / BigInt(fields?.total_supply || 1));
-                
-                
+                const id = s.id as string;
+                const saleName = s.name as string;
+                const saleSymbol = s.symbol as string;
+                const saleImage = s.image as string;
+                const pps = formatUSDC(s.pps as bigint);
                 return (
                   <div key={id} className="nft-row" onClick={() => { window.location.hash = `#/product/${id}`; }} style={{ cursor: 'pointer' }}>
                     <div className="nft-thumb-wrap">
