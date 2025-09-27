@@ -228,9 +228,14 @@ export default function App() {
       const saleType: string = (saleObj as any).data?.type;
       const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
 
-      // Circulating = coin supply from TreasuryCap<T>
+      // Circulating = coin supply from TreasuryCap<T> (in base units)
       let circulating = 0n;
+      let shareDecimals = 6;
       try {
+        if (shareCoinType) {
+          const meta = await client.getCoinMetadata({ coinType: shareCoinType });
+          if (meta?.decimals !== undefined) shareDecimals = meta.decimals;
+        }
         const treasuryId = fields?.vault?.fields?.treasury?.fields?.id?.id as string | undefined;
         if (treasuryId) {
           const treObj = await client.getObject({ id: treasuryId, options: { showContent: true } });
@@ -241,7 +246,9 @@ export default function App() {
 
       const totalSupplyBig = BigInt(fields?.vault?.fields?.total_supply || 0);
       const totalPriceBig = BigInt(fields?.vault?.fields?.total_price || 0);
-      const remaining = totalSupplyBig > circulating ? (totalSupplyBig - circulating) : 0n;
+      const scale = 10n ** BigInt(shareDecimals);
+      const circulatingShares = circulating / scale;
+      const remaining = totalSupplyBig > circulatingShares ? (totalSupplyBig - circulatingShares) : 0n;
 
       // Coin symbol via metadata endpoint (best effort)
       let symbol = 'SHARE';
@@ -263,6 +270,7 @@ export default function App() {
         description,
         image,
         shareCoinType,
+        shareDecimals,
       };
       
       return productData;
@@ -487,6 +495,26 @@ export default function App() {
   // =====================================================================================
   // Admin: publish per-asset coin template (2-step flow)
   // =====================================================================================
+  async function updateCoinMetadata(pkgId: string, treId: string, metaId: string) {
+    if (!account) throw new Error('Connect wallet first.');
+    const tx = new Transaction();
+    const enc = new TextEncoder();
+    tx.moveCall({
+      target: `${pkgId}::coin_template::update_all_metadata`,
+      arguments: [
+        tx.object(treId),
+        tx.object(metaId),
+        tx.pure.vector('u8', enc.encode(symbol || '')),
+        tx.pure.string(assetName || ''),
+        tx.pure.string(description || ''),
+        tx.pure.string(iconUrl || ''),
+      ],
+    });
+    try { (tx as any).setGasBudget?.(10_000_000); } catch {}
+    const res = await signAndExecute({ transaction: tx, chain: 'sui:testnet' });
+    await client.waitForTransaction({ digest: res.digest });
+  }
+
   async function publishCoinTemplate(autoProceed: boolean) {
     setLastError(null);
     setIsLoading(true);
@@ -516,14 +544,20 @@ export default function App() {
       const pkgId = published?.packageId as string | undefined;
       if (!pkgId) throw new Error('Publish succeeded but packageId not found.');
 
-      // Find TreasuryCap
+      // Find TreasuryCap and CoinMetadata
       const tre = oc.find((c) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.startsWith(`0x2::coin::TreasuryCap<${pkgId}::coin_template::COIN_TEMPLATE>`));
       const treId = tre?.objectId as string | undefined;
-      if (!treId) throw new Error('TreasuryCap not found in publish effects.');
+      const meta = oc.find((c) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.startsWith(`0x2::coin::CoinMetadata<${pkgId}::coin_template::COIN_TEMPLATE>`));
+      const metaId = meta?.objectId as string | undefined;
+      if (!treId || !metaId) throw new Error('TreasuryCap or CoinMetadata not found in publish effects.');
 
       const cType = `${pkgId}::coin_template::COIN_TEMPLATE`;
-      setDebugData({ publishDigest: res.digest, packageId: pkgId, treasuryCapId: treId });
-      setLoadingMessage('Coin published.');
+      setDebugData({ publishDigest: res.digest, packageId: pkgId, treasuryCapId: treId, coinMetadataId: metaId });
+      setLoadingMessage('Coin published. Updating metadata...');
+
+      // Update coin metadata with current form inputs (symbol/name/description/icon)
+      await updateCoinMetadata(pkgId, treId, metaId);
+      setLoadingMessage('Coin metadata updated.');
 
       if (autoProceed) {
         // proceed to create sale using the freshly published coin
@@ -634,8 +668,9 @@ export default function App() {
       // Load sale to compute pps
       const saleObj = await client.getObject({ id, options: { showContent: true, showType: true } });
       const fields: any = (saleObj as any).data?.content?.fields;
-      const totalSupply = BigInt(fields.total_supply);
-      const totalPrice = BigInt(fields.total_price);
+      const vfields: any = fields?.vault?.fields;
+      const totalSupply = BigInt(vfields?.total_supply ?? 0);
+      const totalPrice = BigInt(vfields?.total_price ?? 0);
       if (totalSupply <= 0n) throw new Error('Invalid total supply');
       const pps = totalPrice / totalSupply;
       // Determine share coin type from sale type
@@ -682,7 +717,7 @@ export default function App() {
         }
       }
       
-      const [pay] = tx.splitCoins(usdcCoin, [tx.pure.u64(cost)]);
+      const [pay] = tx.splitCoins(usdcCoin, [tx.pure.u64(Number(cost))]);
       
       const [shares, change] = tx.moveCall({
         target: `${TEMPLATE_PACKAGE}::template::buy`,
@@ -856,7 +891,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="nft-row-meta">Circulating</div>
-                  <div><strong>{product ? product.circulating?.toString() : '-'}</strong></div>
+                  <div><strong>{product ? (product.circulating / (10n ** BigInt(product.shareDecimals || 6))).toString() : '-'}</strong></div>
                 </div>
                 <div>
                   <div className="nft-row-meta">Remaining shares</div>
