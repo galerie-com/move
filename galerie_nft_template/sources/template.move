@@ -5,7 +5,6 @@ module galerie_nft_template::template {
     use sui::tx_context::TxContext;
     use sui::url::{Self as url, Url};
     use sui::coin::{Self as coin, Coin};
-    use sui::sui::SUI;
     use sui::transfer::{Self as transfer, public_share_object, public_transfer};
     use sui::object::{Self as object, UID, ID};
 
@@ -100,31 +99,30 @@ module galerie_nft_template::template {
         t
     }
 
-    /// Buy FT shares from a shared/owned vault by paying SUI at price_per_share.
-    /// Proceeds go to `beneficiary`. Returns (minted FT, change).
-    public fun buy_shares(
-        vault: &mut Vault<GALERIE_NFT>,
+    /// Buy FT shares from a shared/owned vault by paying coin<C> at price_per_share.
+    /// Proceeds are deposited into the vault. Returns (minted FT, change).
+    public fun buy_shares<C>(
+        vault: &mut Vault<GALERIE_NFT, C>,
         amount: u64,
-        beneficiary: address,
-        mut payment: Coin<SUI>,
+        mut payment: Coin<C>,
         ctx: &mut TxContext
-    ): (TokenizedAsset<GALERIE_NFT>, Coin<SUI>) {
+    ): (TokenizedAsset<GALERIE_NFT>, Coin<C>) {
         assert!(amount > 0, 0);
 
-        let total_supply = vlt::total_supply<GALERIE_NFT>(vault);
-        let total_price = vlt::total_price<GALERIE_NFT>(vault);
+        let total_supply = vlt::total_supply<GALERIE_NFT, C>(vault);
+        let total_price = vlt::total_price<GALERIE_NFT, C>(vault);
         assert!(total_supply > 0, 1);
         let pps = total_price / total_supply; // integer price per share
 
         let cost = pps * amount;
-        let bal = coin::value<SUI>(&payment);
+        let bal = coin::value<C>(&payment);
         assert!(bal >= cost, 2);
 
-        // Take exact payment and forward to beneficiary; return remaining as change
-        let to_pay = coin::split<SUI>(&mut payment, cost, ctx);
-        transfer::public_transfer(to_pay, beneficiary);
+        // Take exact payment and deposit to vault; return remaining as change
+        let to_pay = coin::split<C>(&mut payment, cost, ctx);
+        vlt::deposit_funds<GALERIE_NFT, C>(vault, to_pay);
 
-        let minted = vlt::mint_shares<GALERIE_NFT>(vault, amount, ctx);
+        let minted = vlt::mint_shares<GALERIE_NFT, C>(vault, amount, ctx);
         (minted, payment)
     }
 
@@ -148,21 +146,21 @@ module galerie_nft_template::template {
     /// Share the Sale object
     public fun share_sale(sale: Sale<GALERIE_NFT>) { public_share_object(sale) }
 
-    /// Buy FT directly from Sale, paying SUI to beneficiary
-    public fun buy(
+    /// Buy FT directly from Sale, paying coin<C> to the sale beneficiary
+    public fun buy<C>(
         sale: &mut Sale<GALERIE_NFT>,
         amount: u64,
-        mut payment: Coin<SUI>,
+        mut payment: Coin<C>,
         ctx: &mut TxContext
-    ): (TokenizedAsset<GALERIE_NFT>, Coin<SUI>) {
+    ): (TokenizedAsset<GALERIE_NFT>, Coin<C>) {
         assert!(amount > 0, 10);
         assert!(sale.total_supply > 0, 11);
         let pps = sale.total_price / sale.total_supply;
         let cost = pps * amount;
-        let bal = coin::value<SUI>(&payment);
+        let bal = coin::value<C>(&payment);
         assert!(bal >= cost, 12);
 
-        let to_pay = coin::split<SUI>(&mut payment, cost, ctx);
+        let to_pay = coin::split<C>(&mut payment, cost, ctx);
         public_transfer(to_pay, sale.beneficiary);
 
         let minted = at::mint<GALERIE_NFT>(&mut sale.cap, vector[], vector[], amount, ctx);
