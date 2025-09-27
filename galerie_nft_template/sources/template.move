@@ -11,7 +11,6 @@ module galerie_nft_template::template {
     use asset_tokenization::tokenized_asset::{
         Self as at, AssetCap, AssetMetadata, TokenizedAsset, PlatformCap
     };
-    use asset_tokenization::vault::{Self as vlt, Vault};
 
     /// OTW for this concrete asset type
     public struct GALERIE_NFT has drop {}
@@ -69,61 +68,6 @@ module galerie_nft_template::template {
             burnable,
             ctx
         )
-    }
-
-    /// Mint FT (no per-item metadata)
-    public fun mint_ft(
-        cap: &mut AssetCap<GALERIE_NFT>,
-        amount: u64,
-        ctx: &mut TxContext
-    ): TokenizedAsset<GALERIE_NFT> {
-        at::mint<GALERIE_NFT>(cap, vector[], vector[], amount, ctx)
-    }
-
-    /// Mint NFT (per-item KV metadata; balance forced to 1)
-    public fun mint_nft(
-        cap: &mut AssetCap<GALERIE_NFT>,
-        keys: vector<String>,
-        values: vector<String>,
-        image_url_str: String,
-        ctx: &mut TxContext
-    ): TokenizedAsset<GALERIE_NFT> {
-        let mut t = at::mint<GALERIE_NFT>(cap, keys, values, 1, ctx);
-        // If an explicit image URL string is provided, set image_url on the NFT
-        if (string::length(&image_url_str) > 0) {
-            let bytes = string::into_bytes(image_url_str);
-            let ascii_str = ascii::string(bytes);
-            let u = url::new_unsafe(ascii_str);
-            at::set_image_url<GALERIE_NFT>(&mut t, u);
-        };
-        t
-    }
-
-    /// Buy FT shares from a shared/owned vault by paying coin<C> at price_per_share.
-    /// Proceeds are deposited into the vault. Returns (minted FT, change).
-    public fun buy_shares<C>(
-        vault: &mut Vault<GALERIE_NFT, C>,
-        amount: u64,
-        mut payment: Coin<C>,
-        ctx: &mut TxContext
-    ): (TokenizedAsset<GALERIE_NFT>, Coin<C>) {
-        assert!(amount > 0, 0);
-
-        let total_supply = vlt::total_supply<GALERIE_NFT, C>(vault);
-        let total_price = vlt::total_price<GALERIE_NFT, C>(vault);
-        assert!(total_supply > 0, 1);
-        let pps = total_price / total_supply; // integer price per share
-
-        let cost = pps * amount;
-        let bal = coin::value<C>(&payment);
-        assert!(bal >= cost, 2);
-
-        // Take exact payment and deposit to vault; return remaining as change
-        let to_pay = coin::split<C>(&mut payment, cost, ctx);
-        vlt::deposit_funds<GALERIE_NFT, C>(vault, to_pay);
-
-        let minted = vlt::mint_shares<GALERIE_NFT, C>(vault, amount, ctx);
-        (minted, payment)
     }
 
     /// Create a Sale shared object from an AssetCap and Metadata
