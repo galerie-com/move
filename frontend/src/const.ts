@@ -1,14 +1,14 @@
 // Template package ID (galerie_nft_template)
 export const TEMPLATE_PACKAGE =
-  '0x1e4125cddd972753557a82561309a3b8c39050925526f3ecc09687ff5d7f898e';
+  '0xe950bcc807a428e17aa4074e8916be88a0194f0ac036a43b43edd8e6bd21752f';
 
 // Optional: IDs from your base deployment (from the publish output)
-export const REGISTRY_ID = '0x4176cf78b9a55080d9611b00ebb44764ca9fed610e5233ad78b1eee8c4b2058c';
-export const PLATFORM_CAP_ID = '0xec6f25691a1dab38440e2c60a15637b2ac801d7377801fccc170d13910412b91';
+export const REGISTRY_ID = '0xb6386a8c520cfb0065f9df044676d96f73ac162c62145c3f7f99640b8cadcf59';
+export const PLATFORM_CAP_ID = '0x71478057a5846315aa681b6a082b77e4dfaefbcb57935008ad2406eca50120ec';
 
 // Optional defaults (admin can override in UI): coin type and treasury cap for the asset's shares
-export const DEFAULT_COIN_TYPE = '0x60193479405134b22ff8887bccb4074f8b23448bcb668a72d9ee1d0ce9bf7063::coin_template::COIN_TEMPLATE';
-export const DEFAULT_TREASURY_CAP_ID = '0x916edccbcabdece8846403356b99570df4a37c92cf9cd7f236ecb45a73a77056';
+export const DEFAULT_COIN_TYPE = '0x986f77e120bfe3d3823ddcb7d8636149efd33bb375e77690468531cf9abad4be::coin_template::COIN_TEMPLATE';
+export const DEFAULT_TREASURY_CAP_ID = '0xb292bc56c88729125f15e63943c7e9668b37a4251abf88a6bff0cd7bf0510238';
 
 // USDC coin type on Sui testnet
 export const USDC_TYPE =

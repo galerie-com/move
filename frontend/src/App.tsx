@@ -8,119 +8,7 @@ import {
 } from '@mysten/dapp-kit';
 import { useQuery } from '@tanstack/react-query';
 import { Transaction } from '@mysten/sui/transactions';
-import { TEMPLATE_PACKAGE, PLATFORM_CAP_ID, USDC_TYPE, DEFAULT_COIN_TYPE, DEFAULT_TREASURY_CAP_ID } from './const';
-
-function ErrorPanel({ error }: { error: unknown }) {
-  if (!error) return null;
-  
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  const errorStack = error instanceof Error ? error.stack : undefined;
-  
-  return (
-    <div style={{ 
-      background: '#fef2f2', 
-      border: '2px solid #dc2626', 
-      padding: 16, 
-      marginTop: 12,
-      borderRadius: 8,
-      fontFamily: 'monospace',
-      boxShadow: '0 4px 6px -1px rgba(220, 38, 38, 0.1)'
-    }}>
-      <div style={{ fontWeight: 'bold', color: '#dc2626', marginBottom: 8, fontSize: '16px' }}>
-        🚨 Error Details:
-      </div>
-      <div style={{ marginBottom: 8, color: '#dc2626', fontWeight: '500' }}>
-        <strong style={{ color: '#991b1b' }}>Message:</strong> {errorMessage}
-      </div>
-      {errorStack && (
-        <details style={{ marginTop: 8 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#dc2626' }}>Stack Trace</summary>
-          <pre style={{ 
-            whiteSpace: 'pre-wrap', 
-            fontSize: '12px', 
-            marginTop: 8,
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            padding: 8,
-            borderRadius: 4,
-            color: '#991b1b'
-          }}>
-            {errorStack}
-          </pre>
-        </details>
-      )}
-    </div>
-  );
-}
-
-function DebugPanel({ 
-  title, 
-  data, 
-  isVisible = false 
-}: { 
-  title: string; 
-  data: any; 
-  isVisible?: boolean;
-}) {
-  if (!isVisible) return null;
-  
-  return (
-    <div style={{ 
-      background: '#f0f9ff', 
-      border: '1px solid #0ea5e9', 
-      padding: 12, 
-      marginTop: 8,
-      borderRadius: 6,
-      fontSize: '13px'
-    }}>
-      <div style={{ fontWeight: 'bold', color: '#0369a1', marginBottom: 8 }}>
-        🔍 {title}
-      </div>
-      <pre style={{ 
-        whiteSpace: 'pre-wrap', 
-        fontSize: '12px',
-        background: '#f8fafc',
-        padding: 8,
-        borderRadius: 4,
-        overflow: 'auto',
-        maxHeight: '300px'
-      }}>
-        {JSON.stringify(data, null, 2)}
-      </pre>
-    </div>
-  );
-}
-
-function LoadingSpinner({ message }: { message: string }) {
-  return (
-    <div style={{ 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: 8, 
-      padding: 12,
-      background: '#f0f9ff',
-      border: '1px solid #0ea5e9',
-      borderRadius: 6,
-      marginTop: 8
-    }}>
-      <div style={{ 
-        width: 16, 
-        height: 16, 
-        border: '2px solid #0ea5e9', 
-        borderTop: '2px solid transparent',
-        borderRadius: '50%',
-        animation: 'spin 1s linear infinite'
-      }} />
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
-      <span style={{ color: '#0369a1', fontWeight: '500' }}>{message}</span>
-    </div>
-  );
-}
+import { TEMPLATE_PACKAGE, PLATFORM_CAP_ID, USDC_TYPE } from './const';
 
 function Field({
   label,
@@ -141,11 +29,10 @@ export default function App() {
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
-  const [lastError, setLastError] = useState<unknown>(null);
+  const [, setLastError] = useState<unknown>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState('');
-  const [debugMode, setDebugMode] = useState(false);
-  const [debugData, setDebugData] = useState<any>(null);
+  const [, setLoadingMessage] = useState('');
+  
 
   // -------- Router (hash-based) --------
   type Route = { name: 'explore' | 'admin' | 'product'; id?: string };
@@ -163,7 +50,6 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // ---------- UI state: New Asset & Sale ----------
   const [totalSupply, setTotalSupply] = useState('1000');
   const [totalPrice, setTotalPrice] = useState('50000');
   const [symbol, setSymbol] = useState('STAR');
@@ -172,16 +58,12 @@ export default function App() {
   const [iconUrl, setIconUrl] = useState('https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg/1280px-Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg');
   const [buyAmount, setBuyAmount] = useState('1');
   const [saleId, setSaleId] = useState('');
-  // Admin does not need to fill coin type / treasury cap; resolve automatically
 
-  // ---------- Helpers ----------
   function parseSaleShareCoinType(saleType: string): string | null {
-    // expects something like 0x...::template::Sale<COIN_TYPE>
     const m = saleType.match(/::template::Sale<(.+)>$/);
     return m ? m[1] : null;
   }
 
-  // ---------- Dev helpers: expose to window for console debugging ----------
   useEffect(() => {
     try {
       (window as any).client = client;
@@ -204,19 +86,14 @@ export default function App() {
         route.name === 'product' && route.id ? refetchHoldings() : Promise.resolve(),
       ]);
     } catch (e) {
-      console.warn('Some data refresh failed:', e);
     }
   }
   
-
-  // ---
-
   // ---------- Fetch details for current product (sale + NFT + coin data) ----------
   const { data: product, refetch: refetchProduct } = useQuery({
     queryKey: ['product', route.name === 'product' ? route.id : null],
     enabled: route.name === 'product' && !!route.id,
     queryFn: async () => {
-      console.log('🚀 Product query starting for ID:', route.id);
       const saleObj = await client.getObject({ id: route.id!, options: { showContent: true, showType: true, showPreviousTransaction: true } });
       const fields: any = (saleObj as any).data?.content?.fields;
       // Read NFT data from vault
@@ -228,41 +105,24 @@ export default function App() {
       // Parse share coin type from sale type
       const saleType: string = (saleObj as any).data?.type;
       const shareCoinType = saleType ? parseSaleShareCoinType(saleType) : null;
-      console.log('🔍 Sale type:', saleType);
-      console.log('🔍 Share coin type:', shareCoinType);
 
       // Get token info: circulating supply and decimals
       let circulating = 0n;
       let shareDecimals = 0;
       
       if (shareCoinType) {
-        console.log('🔄 Getting token info for:', shareCoinType);
         try {
           // Get coin metadata (decimals, symbol, etc.)
-          console.log('📋 Getting coin metadata...');
           const meta = await client.getCoinMetadata({ coinType: shareCoinType });
-          console.log('📋 Coin metadata result:', meta);
           shareDecimals = meta?.decimals ?? 0;
           
           // Get actual circulating supply
-          console.log('📊 Getting total supply...');
           const supplyResult = await client.getTotalSupply({ coinType: shareCoinType });
-          console.log('📊 Total supply result:', supplyResult);
           circulating = BigInt(supplyResult?.value ?? '0');
           
-          console.log('✅ Final Token Info:', {
-            coinType: shareCoinType,
-            decimals: shareDecimals,
-            circulatingSupply: circulating.toString(),
-            symbol: meta?.symbol
-          });
-          
         } catch (error) {
-          console.error('❌ Failed to get token info:', error);
-
           // Fallback: derive circulating supply from ShareBought events for this sale
           try {
-            console.log('🟡 Falling back to events-based circulating supply...');
             const ev = await client.queryEvents({
               query: { MoveEventType: `${TEMPLATE_PACKAGE}::template::ShareBought` },
               order: 'descending',
@@ -275,13 +135,10 @@ export default function App() {
               })
               .reduce((sum: bigint, e: any) => sum + BigInt(e.parsedJson?.amount ?? 0), 0n);
             circulating = minted;
-            console.log('🟡 Circulating (via events sum):', circulating.toString());
           } catch (eventFallbackError) {
-            console.warn('Event fallback failed:', eventFallbackError);
           }
         }
       } else {
-        console.log('⚠️ No shareCoinType found');
       }
 
       const totalSupplyBig = BigInt(fields?.vault?.fields?.total_supply || 0);
@@ -303,7 +160,6 @@ export default function App() {
         id: route.id!,
         totalSupply: totalSupplyBig,
         totalPrice: totalPriceBig,
-        circulating,
         remaining,
         symbol,
         name,
@@ -333,7 +189,7 @@ export default function App() {
   });
 
   // ---------- Explore: fetch all sales via events ----------
-  async function fetch_nft_list() {
+  async function fetchNftList() {
     const ev = await client.queryEvents({
       query: { MoveEventType: `${TEMPLATE_PACKAGE}::template::SaleStarted` },
       order: 'descending',
@@ -378,159 +234,9 @@ export default function App() {
   const { data: sales, refetch: refetchSales } = useQuery({
     queryKey: ['sales_v2', TEMPLATE_PACKAGE, route.name],
     enabled: !!TEMPLATE_PACKAGE,
-    queryFn: fetch_nft_list,
+    queryFn: fetchNftList,
   });
 
-  // =====================================================================================
-  // Admin: create NFT+Coin vault, start & share Sale
-  // =====================================================================================
-  async function createAssetAndSale() {
-    setLastError(null);
-    setIsLoading(true);
-    setLoadingMessage('Creating asset and sale...');
-    
-    try {
-      if (!account) throw new Error('Connect wallet first.');
-      
-      // Validate required fields
-      if (!symbol || !assetName || !description || !iconUrl) {
-        throw new Error('All fields (symbol, name, description, image URL) are required');
-      }
-      // Resolve coin type and TreasuryCap: prefer defaults in consts, else auto-detect
-      let resolvedCoinType = DEFAULT_COIN_TYPE;
-      let treasuryId: string | undefined = DEFAULT_TREASURY_CAP_ID || undefined;
-      if (!resolvedCoinType || !treasuryId) {
-        setLoadingMessage('Resolving coin type and TreasuryCap...');
-        const owned = await client.getOwnedObjects({ owner: account.address, options: { showType: true } });
-        if (!resolvedCoinType) {
-          const anyCap = owned.data.find((o: any) => typeof (o.data as any)?.type === 'string' && (o.data as any).type.startsWith('0x2::coin::TreasuryCap<'));
-          if (!anyCap) throw new Error('No TreasuryCap found in your wallet. Please publish a coin and hold its TreasuryCap.');
-          const t = (anyCap.data as any).type as string;
-          const m = t.match(/^0x2::coin::TreasuryCap<(.+)>$/);
-          if (!m) throw new Error('Failed to parse TreasuryCap type.');
-          resolvedCoinType = m[1];
-        }
-        if (!treasuryId) {
-          const targetType = `0x2::coin::TreasuryCap<${resolvedCoinType}>`;
-          const cap = owned.data.find((o: any) => (o.data as any)?.type === targetType);
-          if (!cap || !cap.data || !('objectId' in cap.data)) throw new Error(`TreasuryCap not found in your wallet for ${resolvedCoinType}.`);
-          treasuryId = (cap.data as any).objectId as string;
-        }
-      }
-      
-      const enc = new TextEncoder();
-      const _totalSupply = BigInt(totalSupply || '0');
-      const _totalPrice = BigInt(totalPrice || '0');
-      if (_totalSupply <= 0n) throw new Error('Total supply must be > 0.');
-
-      setLoadingMessage('Building transaction...');
-      
-      // Debug logging
-      console.log('Creating asset with:', {
-        symbol,
-        assetName,
-        description,
-        iconUrl,
-        totalSupply: _totalSupply,
-        totalPrice: _totalPrice
-      });
-      
-      const tx = new Transaction();
-
-      // Resolve PlatformCap (owned) and Registry (shared) for the current TEMPLATE_PACKAGE
-      let platformCapId = PLATFORM_CAP_ID;
-      try {
-        const owned = await client.getOwnedObjects({ owner: account.address, options: { showType: true } });
-        const exactType = `${TEMPLATE_PACKAGE}::template::PlatformCap`;
-        const match = owned.data.find((o: any) => (o.data as any)?.type === exactType);
-        if (match && (match.data as any)?.objectId) platformCapId = (match.data as any).objectId;
-      } catch {}
-
-      // Registry is no longer required in start_sale
-
-      // Create asset -> Vault<T>
-      let vault;
-      try {
-        vault = tx.moveCall({
-          target: `${TEMPLATE_PACKAGE}::template::create_new_asset`,
-          typeArguments: [resolvedCoinType],
-          arguments: [
-            tx.object(platformCapId),
-            tx.pure.u64(_totalSupply),
-            tx.pure.u64(_totalPrice),
-            tx.pure.vector('u8', enc.encode(symbol)),
-            tx.pure.string(assetName),
-            tx.pure.string(description),
-            tx.pure.string(iconUrl),
-            tx.pure.bool(false),
-            tx.object(treasuryId),
-          ],
-        }) as unknown as any;
-      } catch (moveCallError) {
-        console.error('Move call error:', moveCallError);
-        throw new Error(`Failed to create move call: ${moveCallError}`);
-      }
-
-      // Start sale (indexes in registry)
-      const sale = tx.moveCall({
-        target: `${TEMPLATE_PACKAGE}::template::start_sale`,
-        typeArguments: [resolvedCoinType],
-        arguments: [
-          vault,
-          tx.pure.u64(_totalSupply),
-          tx.pure.u64(_totalPrice),
-          tx.pure.address(account.address),
-        ],
-      }) as unknown as any;
-      // Share the Sale object
-      tx.moveCall({ target: `${TEMPLATE_PACKAGE}::template::share_sale`, typeArguments: [resolvedCoinType], arguments: [sale] });
-
-      setLoadingMessage('Executing transaction...');
-      // Set explicit gas budget to avoid dry-run budget inference issues
-      try { (tx as any).setGasBudget?.(100000000); } catch {}
-      let res;
-      try {
-        res = await signAndExecute({ transaction: tx, chain: 'sui:testnet' });
-      } catch (execError) {
-        console.error('Transaction execution error:', execError);
-        throw new Error(`Transaction execution failed: ${execError}`);
-      }
-      
-      setLoadingMessage('Waiting for transaction confirmation...');
-      let full;
-      try {
-        full = await client.waitForTransaction({ digest: res.digest, options: { showObjectChanges: true } });
-      } catch (waitError) {
-        console.error('Transaction wait error:', waitError);
-        throw new Error(`Transaction confirmation failed: ${waitError}`);
-      }
-      
-      // Store debug data
-      setDebugData({
-        transaction: res,
-        objectChanges: full.objectChanges,
-        effects: full.effects,
-        timestamp: new Date().toISOString()
-      });
-      
-      // Find the created Sale ID
-      const oc = (full.objectChanges || []) as any[];
-      const createdSale = oc.find((c) => c.type === 'created' && typeof c.objectType === 'string' && c.objectType.includes('::template::Sale<'));
-      
-      if (createdSale?.objectId) setSaleId(createdSale.objectId);
-      
-      setLoadingMessage('Refreshing data...');
-      await refreshAllData();
-      
-      setLoadingMessage('Success!');
-      setTimeout(() => setIsLoading(false), 1000);
-      alert(`Asset created. Sale shared. Sale ID: ${createdSale?.objectId || 'unknown'}`);
-    } catch (e) { 
-      setIsLoading(false);
-      setLastError(e instanceof Error ? e.message : String(e));
-      console.error('Create Asset Error:', e);
-    }
-  }
 
   // =====================================================================================
   // Admin: publish per-asset coin template (2-step flow)
@@ -592,7 +298,6 @@ export default function App() {
       if (!treId || !metaId) throw new Error('TreasuryCap or CoinMetadata not found in publish effects.');
 
       const cType = `${pkgId}::coin_template::COIN_TEMPLATE`;
-      setDebugData({ publishDigest: res.digest, packageId: pkgId, treasuryCapId: treId, coinMetadataId: metaId });
       setLoadingMessage('Coin published. Updating metadata...');
 
       // Update coin metadata with current form inputs (symbol/name/description/icon)
@@ -609,7 +314,6 @@ export default function App() {
     } catch (e) {
       setIsLoading(false);
       setLastError(e instanceof Error ? e.message : String(e));
-      console.error('Publish Coin Error:', e);
     }
   }
 
@@ -782,7 +486,6 @@ export default function App() {
     } catch (e) { 
       setIsLoading(false);
       setLastError(e instanceof Error ? e.message : String(e));
-      console.error('Buy Error:', e);
     }
   }
 
@@ -793,20 +496,6 @@ export default function App() {
         <div className="row" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <a href="#/explore" style={{ fontSize: 14 }}>Explore</a>
           <a href="#/admin" style={{ fontSize: 14 }}>Admin</a>
-          <button 
-            onClick={() => setDebugMode(!debugMode)}
-            style={{ 
-              fontSize: 12, 
-              padding: '4px 8px', 
-              background: debugMode ? '#dc2626' : '#6b7280',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer'
-            }}
-          >
-            {debugMode ? '🔍 Debug ON' : '🔍 Debug OFF'}
-          </button>
         </div>
         <ConnectButton />
       </header>
@@ -825,13 +514,6 @@ export default function App() {
             {/* Coin type and TreasuryCap resolved automatically */}
             <div className="row" style={{ gap: 12 }}>
               <button 
-                onClick={() => publishCoinTemplate(false)}
-                disabled={!account || isLoading}
-                style={{ background: isLoading ? '#6b7280' : '#10b981', color: 'white', border: 'none', borderRadius: 4, padding: '6px 10px', cursor: isLoading ? 'not-allowed' : 'pointer' }}
-              >
-                {isLoading ? '⏳ Publishing...' : 'Publish Coin Template'}
-              </button>
-              <button 
                 onClick={async () => {
                   setLastError(null);
                   try {
@@ -849,22 +531,7 @@ export default function App() {
                 {isLoading ? '⏳ Auto Flow...' : 'Publish Coin + Create Sale'}
               </button>
             </div>
-            <div className="row">
-              <button 
-                onClick={createAssetAndSale} 
-                disabled={!account || isLoading}
-                style={{ 
-                  background: isLoading ? '#6b7280' : '#3b82f6',
-                  cursor: isLoading ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isLoading ? '⏳ Processing...' : 'Create & Share Sale'}
-              </button>
-            </div>
-            {isLoading && <LoadingSpinner message={loadingMessage} />}
             {saleId && (<div className="nft-meta">Last Sale ID: <code>{saleId}</code></div>)}
-            <ErrorPanel error={lastError} />
-            <DebugPanel title="Transaction Debug Data" data={debugData} isVisible={debugMode} />
           </div>
         </section>
       )}
@@ -920,18 +587,15 @@ export default function App() {
               <div className="nft-meta" style={{ marginBottom: 8 }}>{product?.symbol}</div>
               <p style={{ whiteSpace: 'pre-wrap', marginTop: 0 }}>{product?.description}</p>
 
-              <div className="row" style={{ gap: 24, margin: '10px 0' }}>
+              <div className="row" style={{ display: 'flex', gap: 24, margin: '10px 0', flexWrap: 'wrap' }}>
                 <div>
                   <div className="nft-row-meta">Sale ID</div>
                   <div className="nft-row-id">{product?.id || route.id}</div>
                 </div>
+                <div style={{ flexBasis: '100%' }} />
                 <div>
                   <div className="nft-row-meta">Total supply</div>
                   <div><strong>{product ? product.totalSupply.toString() : '-'}</strong></div>
-                </div>
-                <div>
-                  <div className="nft-row-meta">Circulating</div>
-                  <div><strong>{product ? (product.circulating / (10n ** BigInt(product.shareDecimals || 6))).toString() : '-'}</strong></div>
                 </div>
                 <div>
                   <div className="nft-row-meta">Remaining shares</div>
@@ -967,15 +631,14 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                {isLoading && <LoadingSpinner message={loadingMessage} />}
-                <DebugPanel title="Product Debug Data" data={{ product, perAssetHoldings }} isVisible={debugMode} />
+                
               </div>
             </div>
           </div>
         </section>
       )}
 
-      <ErrorPanel error={lastError} />
+      
     </div>
   );
 }
