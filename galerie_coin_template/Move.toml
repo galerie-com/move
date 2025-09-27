@@ -1,11 +1,12 @@
 [package]
-name = "asset_tokenization"
+name = "galerie_coin_template"
 version = "0.0.1"
 edition = "2024.beta"
 
 [dependencies]
-# Use the Sui framework bundled with your CLI / network.
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
 
 [addresses]
-asset_tokenization = "0x0"
+galerie_coin_template = "0x0"
+
+

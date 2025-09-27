@@ -2,11 +2,10 @@
 
 [move]
 version = 3
-manifest_digest = "AEC15ACDAD0AF79A6784BED711E73D94C9C72496CEC1D25C9F4EDED3801165AC"
-deps_digest = "3C4103934B1E040BB6B23F1D610B4EF9F2F1166A50A104EADCF77467C004C600"
+manifest_digest = "5FE9220EAFE0CCB7628FBCEC077614C4122F5B4217DE441D924DBB8A68189FFB"
+deps_digest = "F8BBB0CCB2491CA29A3DF03D6F92277A4F3574266507ACD77214D37ECA3F3082"
 dependencies = [
   { id = "Sui", name = "Sui" },
-  { id = "asset_tokenization", name = "asset_tokenization" },
 ]
 
 [[move.package]]
@@ -21,14 +20,6 @@ dependencies = [
   { id = "MoveStdlib", name = "MoveStdlib" },
 ]
 
-[[move.package]]
-id = "asset_tokenization"
-source = { local = "../asset_tokenization" }
-
-dependencies = [
-  { id = "Sui", name = "Sui" },
-]
-
 [move.toolchain-version]
 compiler-version = "1.57.0"
 edition = "2024.beta"
@@ -38,6 +29,6 @@ flavor = "sui"
 
 [env.testnet]
 chain-id = "4c78adac"
-original-published-id = "0x3e0a52f03c5a95059bf4dde161b31b65cfed1f61ff3824a006e2961bb04f528a"
-latest-published-id = "0x3e0a52f03c5a95059bf4dde161b31b65cfed1f61ff3824a006e2961bb04f528a"
+original-published-id = "0xe950bcc807a428e17aa4074e8916be88a0194f0ac036a43b43edd8e6bd21752f"
+latest-published-id = "0xe950bcc807a428e17aa4074e8916be88a0194f0ac036a43b43edd8e6bd21752f"
 published-version = "1"
